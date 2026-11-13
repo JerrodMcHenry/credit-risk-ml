@@ -10,6 +10,8 @@ Run from the repository root:
 3. Select the preferred model from the cross-validation results only.
 4. Refit logistic regression and random forest on the full training set and evaluate each once
    on the held-out test set at the default 0.5 threshold. Nothing is changed after that.
+5. Interpret the two fitted models (coefficients and impurity-based importances). This reads the
+   models fitted on the training set only; the test set plays no part in it.
 """
 
 from pathlib import Path
@@ -166,6 +168,37 @@ def evaluate_on_test(fitted_models, X_test, y_test):
     return results
 
 
+def interpret_models(fitted_models, X_train):
+    """Align logistic regression coefficients and random forest importances with transformed feature names.
+
+    Uses the models already fitted on the training set; nothing is refitted and no test data is involved.
+    Feature names look like "numeric__duration" or "categorical__status_1" (variable status, code 1).
+    n_train counts the training rows in each category, because coefficients for rare categories are unstable.
+    """
+    lr = fitted_models["Logistic regression"]
+    rf = fitted_models["Random forest"]
+    lr_names = lr.named_steps["preprocess"].get_feature_names_out()
+    rf_names = rf.named_steps["preprocess"].get_feature_names_out()
+
+    coefficients = pd.DataFrame({
+        "coefficient": lr.named_steps["model"].coef_[0],
+        "n_train": lr.named_steps["preprocess"].transform(X_train).sum(axis=0).round().astype(int),
+    }, index=lr_names).sort_values("coefficient")
+    coefficients.loc[coefficients.index.str.startswith("numeric__"), "n_train"] = len(X_train)
+    importances = pd.Series(rf.named_steps["model"].feature_importances_, index=rf_names).sort_values(ascending=False)
+    # One-hot encoding spreads a variable over several columns; summing gives one total per original variable.
+    original_variable = importances.index.str.replace(r"^numeric__", "", regex=True)
+    for feature in CATEGORICAL_FEATURES:
+        original_variable = original_variable.where(~original_variable.str.startswith(f"categorical__{feature}_"), feature)
+    importance_by_variable = importances.groupby(original_variable).sum().sort_values(ascending=False)
+    return {
+        "coefficients": coefficients,
+        "intercept": lr.named_steps["model"].intercept_[0],
+        "importances": importances,
+        "importance_by_variable": importance_by_variable,
+    }
+
+
 def format_confusion_matrix(matrix):
     (tn, fp), (fn, tp) = matrix
     return pd.DataFrame(
@@ -242,7 +275,32 @@ def main(data_path=DATA_PATH):
     print("  and Brier scores therefore reflect this sample, not real-world default rates.")
     print("  Educational model on 1970s data: not suitable for lending decisions.")
 
-    return {"cv": results, "selected": selected, "test": test_results}
+    interpretation = interpret_models(final_models, X_train)
+    top = 8
+    coefficients = interpretation["coefficients"]
+    print("\nModel interpretation (models fitted on the 800 training rows; test set not used)")
+    print(f"\nLogistic regression: {len(coefficients)} transformed features, intercept {interpretation['intercept']:+.3f}")
+    print("Encoding: numeric features standardised (coefficient = change in log-odds per 1 training-set SD);")
+    print("every category of every categorical variable has its own 0/1 column (no category dropped, so there is")
+    print("no reference category). With L2 regularisation (default C=1.0), compare categories within the same")
+    print("variable with each other rather than reading each coefficient on its own.")
+    print("\nNumeric features (per 1 SD):")
+    print(coefficients[coefficients.index.str.startswith("numeric__")].round(3).to_string())
+    print(f"\nLargest positive coefficients (associated with higher predicted log-odds of bad_risk = 1):")
+    print(coefficients.tail(top)[::-1].round(3).to_string())
+    print(f"\nLargest negative coefficients (associated with lower predicted log-odds of bad_risk = 1):")
+    print(coefficients.head(top).round(3).to_string())
+
+    print(f"\nRandom forest: impurity-based importances (sum to 1; no direction of effect)")
+    print(f"Top {top} transformed features:")
+    print(interpretation["importances"].head(top).round(3).to_string())
+    print(f"\nSummed per original variable (top {top}):")
+    print(interpretation["importance_by_variable"].head(top).round(3).to_string())
+    print("\nThese are associations learned from an oversampled 1970s sample, not causal effects. Correlated")
+    print("predictors (e.g. duration and amount) share or split weight, and impurity importance favours")
+    print("continuous features with many possible split points (amount, age, duration).")
+
+    return {"cv": results, "selected": selected, "test": test_results, "interpretation": interpretation}
 
 
 if __name__ == "__main__":

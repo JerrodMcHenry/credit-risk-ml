@@ -87,7 +87,8 @@ def test_predictions_and_probabilities_are_valid():
     X_fit, X_check, y_fit, y_check = X_train.iloc[:600], X_train.iloc[600:], y_train.iloc[:600], y_train.iloc[600:]
 
     models = {k: v for k, v in train.build_models().items() if k != "Majority class"}
-    results = train.evaluate_on_test(train.fit_final_models(models, X_fit, y_fit), X_check, y_check)
+    fitted = train.fit_final_models(models, X_fit, y_fit)
+    results = train.evaluate_on_test(fitted, X_check, y_check)
     for name, model in models.items():
         probabilities = model.predict_proba(X_check)
         assert list(model.classes_) == [0, 1]  # column 1 is bad_risk = 1
@@ -97,3 +98,13 @@ def test_predictions_and_probabilities_are_valid():
         assert set(np.unique(model.predict(X_check))) <= {0, 1}
         assert results[name]["confusion_matrix"].sum() == len(X_check)
         assert 0 <= results[name]["brier"] <= 1 and 0 <= results[name]["roc_auc"] <= 1
+
+    # Interpretation values are aligned one-to-one with the fitted preprocessor's feature names.
+    interpretation = train.interpret_models(fitted, X_fit)
+    names = fitted["Logistic regression"].named_steps["preprocess"].get_feature_names_out()
+    assert sorted(interpretation["coefficients"].index) == sorted(names)
+    assert sorted(interpretation["importances"].index) == sorted(names)
+    lr_coef = fitted["Logistic regression"].named_steps["model"].coef_[0]
+    assert np.allclose(interpretation["coefficients"].loc[names, "coefficient"], lr_coef)
+    assert np.isclose(interpretation["importances"].sum(), 1)
+    assert set(interpretation["importance_by_variable"].index) == set(X.columns)
