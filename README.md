@@ -55,6 +55,7 @@ Python 3.14 · pandas · NumPy · Matplotlib · scikit-learn · Jupyter · pytes
    - categorical features get most-frequent imputation, then one-hot encoding with `handle_unknown="ignore"`.
 
    Ordinal codes are one-hot encoded too, because the exploratory analysis showed that their code order doesn't follow observed risk.
+   The exploratory analysis used all 1,000 rows, including the later test rows, so it informed this encoding choice; nothing else in the pipeline is based on it.
 5. **Majority-class baseline.** `DummyClassifier(strategy="most_frequent")` shows what "always predict good" achieves.
 6. **Logistic regression** (`max_iter=1000`), using default settings.
 7. **Random forest** (`n_estimators=200`), using default settings. Neither model was tuned or class-weighted.
@@ -128,7 +129,7 @@ TP = bad credit predicted bad, FP = good credit predicted bad, TN = good credit 
 ### Why logistic regression was selected, and why that stands
 
 - **Selection used cross-validation only.** The random forest's ROC-AUC lead (0.788 vs 0.780) is far smaller than the fold standard deviations
-  (0.041 / 0.027), so on the primary metric the models are tied. Logistic regression found clearly more bad credits (recall 0.487 vs 0.362),
+  (0.041 / 0.027), so on the primary metric the models are tied. At the 0.5 threshold, logistic regression found clearly more bad credits (recall 0.487 vs 0.362),
   had a better and more stable F1, and is simpler to interpret.
 - **On the test set the random forest scored higher on every metric.** In counts, it caught one more bad credit and raised 7 fewer false alarms.
   Logistic regression's own test results are within two fold standard deviations of its cross-validation estimates.
@@ -203,7 +204,8 @@ feature a real-world risk factor.
 
 ## Reproducibility
 
-Tested on Python 3.14.6. All randomness is seeded (`random_state=42`), and repeated runs produce identical output.
+Tested on Python 3.14.6 with the exact versions pinned in `requirements.txt`. All randomness is seeded (`random_state=42`), and repeated runs
+in that pinned environment produce identical output. Other library versions can change the random forest results slightly.
 
 ```bash
 python3 -m venv .venv
